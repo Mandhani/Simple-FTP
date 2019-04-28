@@ -14,16 +14,20 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import headers.AckHeader;
 import headers.DataHeader;
 
-abstract class Timeout extends TimerTask {
-	public static int seq;
+class Timeout extends TimerTask {
+	public int seq;
 
 	public Timeout(int sequenceNumber) {
 		seq = sequenceNumber;
 	}
+
+	public void run() {}
 }
 
 /**
@@ -39,12 +43,14 @@ public class Client {
 	int MSS;
 	FileInputStream fin;
 	int aws;// availableWindowSize:)
-	int lastACK = 0;
+	int lastACK = -1;
 	int sequenceNum = 0;
 	ArrayList<Buffer> buffer;
 	Socket client;
 	DataOutputStream out;
 	DataInputStream in;
+	Lock lock = new ReentrantLock();
+	Boolean doneSending = false;
 
 	public Client(String hostName, int port, String fileName, int windowSize, int mSS) {
 		this.hostName = hostName;
@@ -54,16 +60,17 @@ public class Client {
 		this.MSS = mSS;
 		buffer = new ArrayList<Buffer>();
 		connectToServer();
+		openFile();
 	}
 
 	void connectToServer() {
 		try {
 			client = new Socket(hostName, port);
-			System.out.println("Just connected to " + client.getRemoteSocketAddress());
+			//System.out.println("Just connected to " + client.getRemoteSocketAddress());
 			out = new DataOutputStream(client.getOutputStream());
 			in = new DataInputStream(client.getInputStream());
 		} catch (IOException e) {
-			System.out.println("Exiting. Error while connecting to server: " + e);
+			//System.out.println("Exiting. Error while connecting to server: " + e);
 			System.exit(1);
 		}
 	}
@@ -73,17 +80,19 @@ public class Client {
 		try {
 			fin = new FileInputStream(file);
 		} catch (FileNotFoundException e) {
-			System.out.println("File not found" + e);
+			//System.out.println("File not found" + e);
 		}
 	}
 
-	private Byte rdt_send() {
+	private byte rdt_send() {
 		try {
-			return (byte) fin.read();
+			if(fin.available()>0) {
+				return (byte) fin.read();
+			}
 		} catch (FileNotFoundException e) {
-			System.out.println("File not found" + e);
+			//System.out.println("File not found" + e);
 		} catch (IOException ioe) {
-			System.out.println("Exception while reading file " + ioe);
+			//System.out.println("Exception while reading file " + ioe);
 		}
 		return '\0';
 	}
@@ -94,67 +103,100 @@ public class Client {
 				fin.close();
 			}
 		} catch (IOException ioe) {
-			System.out.println("Error while closing stream: " + ioe);
+			//System.out.println("Error while closing stream: " + ioe);
 		}
 	}
 
 	Runnable send = new Runnable() {
 		public void run() {
-			openFile();
 			try {
 				while (fin != null && fin.available() > 0) {
 					// check if buffer size is less than window size.
 					if (buffer.size() < windowSize) {
-						ArrayList<Byte> packetData = new ArrayList<Byte>();
-						Byte nextByte = rdt_send();
-						int count = 0;
-						while (nextByte != '\0' && count < MSS) {
-							packetData.add((Byte) nextByte);
-							count++;
+						//byte[] packetData = new byte[];
+						ArrayList<Byte> ab = new ArrayList<Byte>();
+						byte nextByte;
+						for(int i=0;i<MSS;i++) {
+							if((nextByte = rdt_send()) == '\0') {
+								break;
+							}
+							ab.add(nextByte);
+						}
+						byte[] packetData = new byte[ab.size()];
+						for(int i=0;i<ab.size();i++) {
+							packetData[i] = ab.get(i);
 						}
 						Buffer packet = new Buffer();
 						packet.setSeq(sequenceNum);
 						packet.setBuffer(packetData);
+						//System.out.println(sequenceNum + ": " + packetData.length);
+						//System.out.println("Waiting on lock");
+						lock.lock();
+						//System.out.println("Not any more");
 						buffer.add(packet);
 						sendpacket(buffer.get(buffer.size() - 1));// sends,increments seq, starts timer.
+						lock.unlock();
+						sequenceNum++;
 					}
+					//Thread.sleep(300);
 					// continue looping until all bytes are sent.
 				}
 			} catch (IOException e1) {
-				System.out.println("Error while reading available bytes or sending the read bytes: " + e1);
+				//System.out.println("Error while reading available bytes or sending the read bytes: ");
+				e1.printStackTrace();
+			} finally {
+				while(buffer.size()>0) {
+					//loop
+					//System.out.println("In loop. Closing file now. Buffer Size: " + buffer.size());
+				}
+				doneSending = true;
+				//System.out.println("Closing file now. Buffer Size: " + buffer.size());
+				closeFile();
 			}
-			closeFile();
 		}
 
 		private void sendpacket(Buffer packet) throws IOException {
-			DataHeader dh = new DataHeader(sequenceNum, packet.getBuffer().toString());
+			DataHeader dh = new DataHeader(packet.getSeq(), getString(packet.getBuffer()));
+			//System.out.println("Sending: " + packet.getSeq() + ", Length: "+getString(packet.getBuffer()).getBytes().length);
 			out.writeUTF(dh.getPacketWithHeaders());
+			//out.flush();
 			packet.setTimer(startTimer(packet.getSeq()));
-			sequenceNum++;
+		}
+		
+		private String getString(byte[] data) {
+			return new String(data);
 		}
 
 		private Timer startTimer(int sequence) {
 			Timer t = new Timer();
 			t.schedule(new Timeout(sequence) {
+				@Override
 				public void run() {
 					// timeout has occured. send again.
-					retransmitOnFailure(seq);
 					System.out.println("Timeout, sequence number = " + seq);
+					retransmitOnFailure(seq);
 				}
 			}, 1000);
 			return t;
 		}
 
 		private void retransmitOnFailure(int failedSeq) {
-			sequenceNum = failedSeq;
-			int failedIndex = findIndex(failedSeq);
-			for (int i = failedIndex; i < buffer.size(); i++) {
-				try {
-					sendpacket(buffer.get(i));
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
-					System.out.println("Error while retranmission: " + e);
+			//sequenceNum = failedSeq;
+			//int failedIndex = findIndex(failedSeq);
+			try {
+				lock.lock();
+				for (int i = 0; i < buffer.size(); i++) {
+					stopTimer(i);
 				}
+				for (int i = 0; i < buffer.size(); i++) {
+					//System.out.println("Retransmitting: "+ buffer.get(i).getSeq());
+					sendpacket(buffer.get(i));
+					//Thread.sleep(300);;
+				}
+				lock.unlock();
+			}catch (IOException e) {
+					//System.out.println("Error while retranmission: ");
+					e.printStackTrace();
 			}
 		}
 	};
@@ -162,14 +204,15 @@ public class Client {
 	private int findIndex(int Seq) {
 		int ans = -1;
 		for (int i = 0; i < buffer.size(); i++) {
-			long bufPacketSeq = buffer.get(i).getSeq();
+			int bufPacketSeq = buffer.get(i).getSeq();
+			//System.out.println("FindingIndex: given seq: " + Seq + ", Actual Seq in buffer: " + bufPacketSeq);
 			if (Seq == bufPacketSeq) {
 				ans = i;
 				break;
 			}
 		}
 		if (ans == -1) {
-			System.out.println("Error Occured while finding index. Returning -1.");
+			//System.out.println("Error Occured while finding index " + Seq + ". Returning -1.");
 		}
 		return ans;
 	}
@@ -177,48 +220,60 @@ public class Client {
 	Runnable receive = new Runnable() {
 		public void run() {
 			try {
-				while (fin != null && fin.available() > 0 && buffer.size() != 0) {
-					AckHeader ah = new AckHeader(in.readUTF());
-					if(!ah.checkValidAck()) {
-						continue;
+				while (!doneSending) {
+					if(in.available()>0) {
+						AckHeader ah = new AckHeader(in.readUTF());
+						if(!ah.checkValidAck()) {
+							//System.out.println("ValidCheckFail for ACK.");
+							//continue;
+						}
+						int successAck = ah.getSequenceNumber();
+						//System.out.println("Received Successful ACK for Seq: " + (successAck-1));
+						removeFromBuffer(successAck);
+						lastACK = successAck;
 					}
-					int successAck = ah.getSequenceNumber();
-					stopTimer(successAck);
-					removeFromBuffer(successAck);
-					lastACK = successAck;
 				}
-				client.close();
 			} catch (IOException e) {
-				System.out.println("Error while receiving ACK");
+				//System.out.println("Error while receiving ACK: ");
+				e.printStackTrace();
+			} finally {
+				//System.out.println("################Closing connection now.####################");
+				try {
+					client.close();
+				} catch (IOException e) {
+					System.out.println("Error while closing: ");
+					e.printStackTrace();
+				}
 			}
 		}
 
 		private void removeFromBuffer(int successAck) {
-			int indexInBuffer = findIndex(successAck);
+			int indexInBuffer = findIndex(successAck-1);
 			Collection<Buffer> c = new ArrayList<Buffer>();
+			lock.lock();
 			for (int i=0;i<=indexInBuffer;i++) {
+				stopTimer(i);
 				c.add(buffer.get(i));
 			}
 			buffer.removeAll(c);
-		}
-
-		private void stopTimer(int successAck) {
-			int indexInBuffer = findIndex(successAck);
-			for (int i=0;i<=indexInBuffer;i++) {
-				buffer.get(i).getTimer().cancel();
-			}
+			lock.unlock();
 		}
 	};
+
+	private void stopTimer(int index) {
+		buffer.get(index).getTimer().cancel();
+	}
 
 	/**
 	 * @param args
 	 */
-	public static void main(String[] args) {
-		// TODO Auto-generated method stub
-		// parse args
-		// call client tx and rx
-		
-		Client c = new Client("localhost", 7735, "C:\\Users\\Kushal Mandhani\\Desktop\\Lab3Answers.txt", 10, 500);
+	public static void main(String[] argv) {
+		int port = Integer.parseInt(argv[1]);
+		String host = argv[0];
+		String file = argv[2];
+		int N = Integer.parseInt(argv[3]);
+		int MSS = Integer.parseInt(argv[4]);
+		Client c = new Client(host,port,file,N,MSS);
 		Thread sender = new Thread(c.send);
 		Thread rcvr = new Thread(c.receive);
 		sender.start();
@@ -227,9 +282,9 @@ public class Client {
 			sender.join();
 			rcvr.join();
 		} catch (InterruptedException e) {
-			System.out.println("An Error Occurred while trying to wait on child threads. Error: " + e);
+			//System.out.println("An Error Occurred while trying to wait on child threads. Error: " + e);
 		}
-		System.out.println("All done!");
+		//System.out.println("All done!");
 		// terminate everything and exit
 	}
 

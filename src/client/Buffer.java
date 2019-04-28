@@ -3,7 +3,6 @@
  */
 package client;
 
-import java.util.ArrayList;
 import java.util.Timer;
 
 /**
@@ -12,7 +11,7 @@ import java.util.Timer;
  */
 public class Buffer {
 	int seq;
-	ArrayList<Byte> buffer;
+	byte[] buffer;
 	Timer timer;
 	
 	public Timer getTimer() {
@@ -27,10 +26,10 @@ public class Buffer {
 	public void setSeq(int seq) {
 		this.seq = seq;
 	}
-	public ArrayList<Byte> getBuffer() {
+	public byte[] getBuffer() {
 		return buffer;
 	}
-	public void setBuffer(ArrayList<Byte> buffer) {
+	public void setBuffer(byte[] buffer) {
 		this.buffer = buffer;
 	}
 }

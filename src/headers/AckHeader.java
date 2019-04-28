@@ -1,5 +1,7 @@
 package headers;
 
+import java.nio.ByteBuffer;
+
 public class AckHeader {
 	int sequenceNumber;
 	char checksum = 0;
@@ -7,7 +9,10 @@ public class AckHeader {
 	String header;
 	
 	public AckHeader(String packet) {
-		sequenceNumber = Integer.parseInt(String.valueOf(packet.charAt(0)) + String.valueOf(packet.charAt(1)));
+		ByteBuffer b = ByteBuffer.allocate(4);
+		b.putChar(0,packet.charAt(0));
+		b.putChar(2,packet.charAt(1));
+		sequenceNumber = b.getInt(0);
 		header = packet;
 	}
 	
@@ -28,7 +33,11 @@ public class AckHeader {
 	//server methods start
 	public AckHeader(int seq) {
 		sequenceNumber = seq;
-		header = String.valueOf(sequenceNumber) + String.valueOf(checksum) + String.valueOf(identifier);
+		ByteBuffer b = ByteBuffer.allocate(4);
+		b.putInt(sequenceNumber);
+		char c1 = b.getChar(0);
+		char c2 = b.getChar(2);
+		header = String.valueOf(c1) + String.valueOf(c2) + String.valueOf(checksum) + String.valueOf(identifier);
 	}
 	
 	public String getHeader() {

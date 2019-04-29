@@ -110,6 +110,7 @@ public class Client {
 	Runnable send = new Runnable() {
 		public void run() {
 			try {
+				long startTime = System.nanoTime();
 				while (fin != null && fin.available() > 0) {
 					// check if buffer size is less than window size.
 					if (buffer.size() < windowSize) {
@@ -132,26 +133,40 @@ public class Client {
 						//System.out.println(sequenceNum + ": " + packetData.length);
 						//System.out.println("Waiting on lock");
 						lock.lock();
+						//System.out.println("Lock held by send");
 						//System.out.println("Not any more");
 						buffer.add(packet);
 						sendpacket(buffer.get(buffer.size() - 1));// sends,increments seq, starts timer.
 						lock.unlock();
+						//System.out.println("Lock released by send");
 						sequenceNum++;
 					}
-					//Thread.sleep(300);
+					Thread.sleep(1);
 					// continue looping until all bytes are sent.
 				}
+				while(buffer.size()>0) {
+					try {
+						Thread.sleep(1000); 
+						
+						
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+					//System.out.println("In loop. Closing file now. Buffer Size: " + buffer.size());
+				}
+				System.out.println("Closing file now. Buffer Size: " + buffer.size());
+				long endTime   = System.nanoTime();
+				long totalTime = endTime - startTime;
+				System.out.println("Total time for transfer: " + totalTime / (1000000000) + " seconds.");
+				doneSending = true;
+				closeFile();
+				System.exit(0);
 			} catch (IOException e1) {
 				//System.out.println("Error while reading available bytes or sending the read bytes: ");
 				e1.printStackTrace();
-			} finally {
-				while(buffer.size()>0) {
-					//loop
-					//System.out.println("In loop. Closing file now. Buffer Size: " + buffer.size());
-				}
-				doneSending = true;
-				//System.out.println("Closing file now. Buffer Size: " + buffer.size());
-				closeFile();
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
 			}
 		}
 
@@ -176,7 +191,7 @@ public class Client {
 					System.out.println("Timeout, sequence number = " + seq);
 					retransmitOnFailure(seq);
 				}
-			}, 1000);
+			}, 100);
 			return t;
 		}
 
@@ -185,6 +200,7 @@ public class Client {
 			//int failedIndex = findIndex(failedSeq);
 			try {
 				lock.lock();
+				//System.out.println("Lock held by retransmit");
 				for (int i = 0; i < buffer.size(); i++) {
 					stopTimer(i);
 				}
@@ -194,6 +210,7 @@ public class Client {
 					//Thread.sleep(300);;
 				}
 				lock.unlock();
+				//System.out.println("Lock released by retransmit");
 			}catch (IOException e) {
 					//System.out.println("Error while retranmission: ");
 					e.printStackTrace();
@@ -228,7 +245,7 @@ public class Client {
 							//continue;
 						}
 						int successAck = ah.getSequenceNumber();
-						//System.out.println("Received Successful ACK for Seq: " + (successAck-1));
+						//System.out.println("Received Successful ACK for Seq: " + (successAck-1) + "current Buffer: " + buffer.size());
 						removeFromBuffer(successAck);
 						lastACK = successAck;
 					}
@@ -244,18 +261,25 @@ public class Client {
 					System.out.println("Error while closing: ");
 					e.printStackTrace();
 				}
+				System.exit(0);
 			}
 		}
 
 		private void removeFromBuffer(int successAck) {
 			int indexInBuffer = findIndex(successAck-1);
+			if(indexInBuffer == -1) {
+				return;
+			}
 			Collection<Buffer> c = new ArrayList<Buffer>();
 			lock.lock();
+			//System.out.println("Lock held by remove from buffer, buffer size: " + buffer.size());
 			for (int i=0;i<=indexInBuffer;i++) {
 				stopTimer(i);
 				c.add(buffer.get(i));
+				//System.out.println("Removing from buffer: " + buffer.get(i).getSeq());
 			}
 			buffer.removeAll(c);
+			//System.out.println("Lock released by remove from buffer: " + buffer.size());
 			lock.unlock();
 		}
 	};

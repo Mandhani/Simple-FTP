@@ -159,7 +159,10 @@ public class Client {
 				long totalTime = endTime - startTime;
 				System.out.println("Total time for transfer: " + totalTime / (1000000000) + " seconds.");
 				doneSending = true;
+				out.close();
+				client.close();
 				closeFile();
+				System.out.println("Closed.");
 				System.exit(0);
 			} catch (IOException e1) {
 				//System.out.println("Error while reading available bytes or sending the read bytes: ");

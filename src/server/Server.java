@@ -74,9 +74,11 @@ public class Server {
 				}
 				serverSocket.close();
 				server.close();
+				return;
 			} catch (IOException e) {
 				//System.out.println("Error while receiving packet or sending ACK : ");
 				e.printStackTrace();
+				return;
 			}
 		}
 
@@ -106,9 +108,15 @@ public class Server {
 		Thread server = new Thread(s.receive);
 		server.start();
 		try {
-			server.join();
+
+			Thread.sleep(10000);
+			while(!s.serverSocket.isClosed()) {
+				Thread.sleep(1000);
+			}
+			server.interrupt();
+			return;
 		} catch (InterruptedException e) {
-			//System.out.println("An Error Occurred while trying to wait on child threads. Error: " + e);
+			System.out.println("An Error Occurred while trying to wait on child threads. Error: " + e);
 		}
 		//System.out.println("All done!");
 	}
